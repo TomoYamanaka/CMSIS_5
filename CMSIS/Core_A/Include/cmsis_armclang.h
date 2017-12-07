@@ -428,66 +428,6 @@ __STATIC_FORCEINLINE void __set_FPEXC(uint32_t fpexc)
 
 #include "cmsis_cp15.h"
 
-
-/** \brief  Clean and Invalidate the entire data or unified cache
-
-  Generic mechanism for cleaning/invalidating the entire data or unified cache to the point of coherency
- */
-__STATIC_INLINE void __L1C_CleanInvalidateCache(uint32_t op)
-{
-  __ASM volatile(
-    "        PUSH    {R4-R11}                   \n"
-
-    "        MRC     p15, 1, R6, c0, c0, 1      \n" // Read CLIDR
-    "        ANDS    R3, R6, #0x07000000        \n" // Extract coherency level
-    "        MOV     R3, R3, LSR #23            \n" // Total cache levels << 1
-    "        BEQ     Finished                   \n" // If 0, no need to clean
-
-    "        MOV     R10, #0                    \n" // R10 holds current cache level << 1
-    "Loop1:  ADD     R2, R10, R10, LSR #1       \n" // R2 holds cache "Set" position
-    "        MOV     R1, R6, LSR R2             \n" // Bottom 3 bits are the Cache-type for this level
-    "        AND     R1, R1, #7                 \n" // Isolate those lower 3 bits
-    "        CMP     R1, #2                     \n"
-    "        BLT     Skip                       \n" // No cache or only instruction cache at this level
-
-    "        MCR     p15, 2, R10, c0, c0, 0     \n" // Write the Cache Size selection register
-    "        ISB                                \n" // ISB to sync the change to the CacheSizeID reg
-    "        MRC     p15, 1, R1, c0, c0, 0      \n" // Reads current Cache Size ID register
-    "        AND     R2, R1, #7                 \n" // Extract the line length field
-    "        ADD     R2, R2, #4                 \n" // Add 4 for the line length offset (log2 16 bytes)
-    "        LDR     R4, =0x3FF                 \n"
-    "        ANDS    R4, R4, R1, LSR #3         \n" // R4 is the max number on the way size (right aligned)
-    "        CLZ     R5, R4                     \n" // R5 is the bit position of the way size increment
-    "        LDR     R7, =0x7FFF                \n"
-    "        ANDS    R7, R7, R1, LSR #13        \n" // R7 is the max number of the index size (right aligned)
-
-    "Loop2:  MOV     R9, R4                     \n" // R9 working copy of the max way size (right aligned)
-
-    "Loop3:  ORR     R11, R10, R9, LSL R5       \n" // Factor in the Way number and cache number into R11
-    "        ORR     R11, R11, R7, LSL R2       \n" // Factor in the Set number
-    "        CMP     R0, #0                     \n"
-    "        BNE     Dccsw                      \n"
-    "        MCR     p15, 0, R11, c7, c6, 2     \n" // DCISW. Invalidate by Set/Way
-    "        B       cont                       \n"
-    "Dccsw:  CMP     R0, #1                     \n"
-    "        BNE     Dccisw                     \n"
-    "        MCR     p15, 0, R11, c7, c10, 2    \n" // DCCSW. Clean by Set/Way
-    "        B       cont                       \n"
-    "Dccisw: MCR     p15, 0, R11, c7, c14, 2    \n" // DCCISW. Clean and Invalidate by Set/Way
-    "cont:   SUBS    R9, R9, #1                 \n" // Decrement the Way number
-    "        BGE     Loop3                      \n"
-    "        SUBS    R7, R7, #1                 \n" // Decrement the Set number
-    "        BGE     Loop2                      \n"
-    "Skip:   ADD     R10, R10, #2               \n" // Increment the cache number
-    "        CMP     R3, R10                    \n"
-    "        BGT     Loop1                      \n"
-
-    "Finished:                                  \n"
-    "        DSB                                \n"
-    "        POP    {R4-R11}                      "
-  );
-}
-
 /** \brief  Enable Floating Point Unit
 
   Critical section, called from undef handler, so systick is disabled

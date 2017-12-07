@@ -914,12 +914,68 @@ __STATIC_INLINE void L1C_CleanInvalidateDCacheMVA(void *va) {
   __DMB();     //ensure the ordering of data cache maintenance operations and their effects
 }
 
+__STATIC_FORCEINLINE int32_t log2_up(uint32_t n) {
+  int32_t log = -1;
+  uint32_t t = n;
+  while (t) {
+    log++; t >>=1;
+  }
+  /* if n not power of 2 -> round up*/
+  if ( n & (n - 1) ) log++;
+  return log;
+}
+
+__STATIC_INLINE void __L1C_MaintainDCacheSetWay(uint32_t level, uint32_t maint) {
+  register volatile uint32_t Dummy;
+  register volatile uint32_t ccsidr;
+  uint32_t num_sets;
+  uint32_t num_ways;
+  uint32_t shift_way;
+  uint32_t log2_linesize;
+  uint32_t log2_num_ways;
+
+  Dummy = level << 1;
+  /* set csselr, select ccsidr register */
+  __set_CCSIDR(Dummy);
+  /* get current ccsidr register */
+  ccsidr = __get_CCSIDR();
+  num_sets = ((ccsidr & 0x0FFFE000) >> 13) + 1;
+  num_ways = ((ccsidr & 0x00001FF8) >> 3) + 1;
+  log2_linesize = (ccsidr & 0x00000007) + 2 + 2;
+  log2_num_ways = log2_up(num_ways);
+  shift_way = 32 - log2_num_ways;
+  for (int way = num_ways-1; way >= 0; way--) {
+    for (int set = num_sets-1; set >= 0; set--) {
+      Dummy = (level << 1) | (set << log2_linesize) | (way << shift_way);
+      switch (maint) {
+        case 0:
+          __set_CP(15, 0, Dummy, 7, 6, 2); // DCISW. Invalidate by Set/Way
+          break;
+        case 1:
+          __set_CP(15, 0, Dummy, 7, 10, 2); // DCCSW. Clean by Set/Way
+          break;
+        default:
+          __set_CP(15, 0, Dummy, 7, 14, 2); // DCCISW. Clean and Invalidate by Set/Way
+          break;
+      }
+    }
+  }
+  __DMB();
+}
+
 /** \brief  Clean and Invalidate the entire data or unified cache
 * \param [in] op 0 - invalidate, 1 - clean, otherwise - invalidate and clean
-* \see __L1C_CleanInvalidateCache
 */
 __STATIC_INLINE void L1C_CleanInvalidateCache(uint32_t op) {
-  __L1C_CleanInvalidateCache(op);
+  register volatile uint32_t clidr;
+  uint32_t cache_type;
+  clidr =  __get_CLIDR();
+  for(uint32_t i = 0; i<7; i++) {
+    cache_type = (clidr >> i*3) & 0x7UL;
+    if ((cache_type >= 2) && (cache_type <= 4)) {
+      __L1C_MaintainDCacheSetWay(i, op);
+    }
+  }
 }
 
 /** \brief  Invalidate the whole data cache.
